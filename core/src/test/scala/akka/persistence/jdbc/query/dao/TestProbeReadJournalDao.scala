@@ -75,4 +75,9 @@ class TestProbeReadJournalDao(val probe: TestProbe) extends ReadJournalDao {
    */
   override def maxJournalSequence(): Future[Long] = Future.successful(0)
 
+  override def eventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      maxOffset: java.sql.Timestamp,
+      max: Long): Source[Try[(PersistentRepr, Set[String], java.sql.Timestamp)], NotUsed] = ???
 }

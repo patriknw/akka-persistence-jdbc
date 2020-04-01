@@ -5,7 +5,10 @@
 
 package akka.persistence.jdbc.util
 
+import java.sql.SQLException
 import java.sql.Statement
+
+import scala.util.control.NonFatal
 
 import akka.persistence.jdbc.util.Schema.{ Oracle, SchemaType }
 import slick.jdbc.JdbcBackend.{ Database, Session }
@@ -17,6 +20,7 @@ object Schema {
   final case class MySQL(schema: String = "schema/mysql/mysql-schema.sql") extends SchemaType
   final case class Oracle(schema: String = "schema/oracle/oracle-schema.sql") extends SchemaType
   final case class SqlServer(schema: String = "schema/sqlserver/sqlserver-schema.sql") extends SchemaType
+  final case class Spanner(schema: String = "schema/spanner/spanner-schema.sql") extends SchemaType
 }
 
 trait DropCreate extends ClasspathResources {
@@ -62,6 +66,7 @@ trait DropCreate extends ClasspathResources {
       try stmt.executeUpdate(ddl)
       catch {
         case t: java.sql.SQLSyntaxErrorException if t.getMessage contains "ORA-00942" => // suppress known error message in the test
+        case t: SQLException if t.toString contains "NOT FOUND"                       => // Spanner drop table not found
       }
     }
 

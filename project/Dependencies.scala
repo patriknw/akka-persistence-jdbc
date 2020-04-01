@@ -19,7 +19,8 @@ object Dependencies {
     "org.postgresql" % "postgresql" % "42.2.10",
     "com.h2database" % "h2" % "1.4.200",
     "mysql" % "mysql-connector-java" % "8.0.19",
-    "com.microsoft.sqlserver" % "mssql-jdbc" % "7.4.1.jre8")
+    "com.microsoft.sqlserver" % "mssql-jdbc" % "7.4.1.jre8",
+    "com.google.cloud" % "google-cloud-spanner-jdbc" % "1.15.0")
 
   val Libraries: Seq[ModuleID] = Seq(
       "com.typesafe.akka" %% "akka-actor" % AkkaVersion,

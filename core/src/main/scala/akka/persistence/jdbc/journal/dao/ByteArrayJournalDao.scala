@@ -22,6 +22,8 @@ import scala.concurrent.{ ExecutionContext, Future, Promise }
 import scala.util.{ Failure, Success, Try }
 
 import akka.actor.Scheduler
+import slick.jdbc.PositionedParameters
+import slick.jdbc.SetParameter
 
 /**
  * The DefaultJournalDao contains all the knowledge to persist and load serialized journal entries
@@ -79,9 +81,23 @@ trait BaseByteArrayJournalDao extends JournalDaoWithUpdates with BaseJournalDaoW
     }
   }
 
+  implicit object SetBytes extends SetParameter[Array[Byte]] {
+    def apply(v: Array[Byte], pp: PositionedParameters): Unit = { pp.setBytes(v) }
+  }
+
   private def writeJournalRows(xs: Seq[JournalRow]): Future[Unit] = {
-    // Write atomically without auto-commit
-    db.run(queries.writeJournalRows(xs).transactionally).map(_ => ())
+    if (profile == SpannerProfile) {
+      import journalConfig.journalTableConfiguration._
+      import columnNames._
+      // FIXME use better schema with separate columns
+      val inserts = xs.map(row =>
+        sqlu"insert into #$tableName (#$writeTime, #$ordering, #$persistenceId, #$sequenceNumber, #$deleted, #$tags, #$message) values (PENDING_COMMIT_TIMESTAMP(), 0, ${row.persistenceId}, ${row.sequenceNumber}, false, ${row.tags
+          .getOrElse("")}, ${row.message})")
+      // Write atomically without auto-commit
+      db.run(DBIO.sequence(inserts).transactionally).map(_ => ())
+    } else {
+      db.run(queries.writeJournalRows(xs).transactionally).map(_ => ())
+    }
   }
 
   /**

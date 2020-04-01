@@ -33,6 +33,12 @@ trait ReadJournalDao extends JournalDaoWithReadMessages {
       maxOffset: Long,
       max: Long): Source[Try[(PersistentRepr, Set[String], Long)], NotUsed]
 
+  def eventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      maxOffset: java.sql.Timestamp,
+      max: Long): Source[Try[(PersistentRepr, Set[String], java.sql.Timestamp)], NotUsed]
+
   /**
    * @param offset Minimum value to retrieve
    * @param limit Maximum number of values to retrieve

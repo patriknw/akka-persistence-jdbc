@@ -6,6 +6,8 @@
 package akka.persistence.jdbc.query
 package scaladsl
 
+import java.io
+
 import akka.NotUsed
 import akka.actor.ExtendedActorSystem
 import akka.persistence.jdbc.config.ReadJournalConfig
@@ -28,7 +30,9 @@ import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.{ Failure, Success }
 
 import akka.actor.Scheduler
+import akka.persistence.jdbc.query.dao.SpannerReadJournalDao
 import akka.persistence.jdbc.util.PluginVersionChecker
+import akka.persistence.query.NoOffset
 
 object JdbcReadJournal {
   final val Identifier = "jdbc-read-journal"
@@ -159,8 +163,19 @@ class JdbcReadJournal(config: Config, configPath: String)(implicit val system: E
    *
    * The returned event stream is ordered by `offset`.
    */
-  override def currentEventsByTag(tag: String, offset: Offset): Source[EventEnvelope, NotUsed] =
-    currentEventsByTag(tag, offset.value)
+  override def currentEventsByTag(tag: String, offset: Offset): Source[EventEnvelope, NotUsed] = {
+    readJournalDao match {
+      case spannerDao: SpannerReadJournalDao if spannerDao.isSpannerDriver(spannerDao.profile) =>
+        // FIXME is the now timestamp needed?
+        currentJournalEventsByTagSpanner(
+          tag,
+          timestampOffset(offset),
+          Long.MaxValue,
+          new java.sql.Timestamp(System.currentTimeMillis()))
+      case _ =>
+        currentEventsByTag(tag, offset.value)
+    }
+  }
 
   private def currentJournalEventsByTag(
       tag: String,
@@ -261,9 +276,93 @@ class JdbcReadJournal(config: Config, configPath: String)(implicit val system: E
    * Corresponding query that is completed when it reaches the end of the currently
    * stored events is provided by [[CurrentEventsByTagQuery#currentEventsByTag]].
    */
-  override def eventsByTag(tag: String, offset: Offset): Source[EventEnvelope, NotUsed] =
-    eventsByTag(tag, offset.value)
+  override def eventsByTag(tag: String, offset: Offset): Source[EventEnvelope, NotUsed] = {
+    readJournalDao match {
+      case spannerDao: SpannerReadJournalDao if spannerDao.isSpannerDriver(spannerDao.profile) =>
+        eventsByTagSpanner(tag, timestampOffset(offset), None)
+      case _ =>
+        eventsByTag(tag, offset.value)
+    }
+
+  }
 
   def eventsByTag(tag: String, offset: Long): Source[EventEnvelope, NotUsed] =
     eventsByTag(tag, offset, terminateAfterOffset = None)
+
+  private def eventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      terminateAfterOffset: Option[java.sql.Timestamp]): Source[EventEnvelope, NotUsed] = {
+    import JdbcReadJournal._
+    implicit val askTimeout: Timeout = Timeout(readJournalConfig.journalSequenceRetrievalConfiguration.askTimeout)
+    val batchSize = readJournalConfig.maxBufferSize
+
+    Source
+      .unfoldAsync[(java.sql.Timestamp, FlowControl), Seq[EventEnvelope]]((offset, Continue)) {
+        case (from, control) =>
+          def retrieveNextBatch() = {
+            val queryUntil = new java.sql.Timestamp(System.currentTimeMillis()) // FIXME probably a very bad idea, why needed in first place?
+            for {
+              // FIXME
+//              queryUntil <- journalSequenceActor.ask(GetMaxOrderingId).mapTo[MaxOrderingId]
+              xs <- currentJournalEventsByTagSpanner(tag, from, batchSize, queryUntil).runWith(Sink.seq)
+            } yield {
+              val hasMoreEvents = xs.size == batchSize
+              val nextControl: FlowControl =
+                terminateAfterOffset match {
+                  // we may stop if target is behind queryUntil and we don't have more events to fetch
+                  // FIXME case Some(target) if !hasMoreEvents && target <= queryUntil.maxOrdering => Stop
+                  case Some(target) if !hasMoreEvents => Stop
+                  // We may also stop if we have found an event with an offset >= target
+                  case Some(target) if xs.exists(env => timestampOffset(env.offset).compareTo(target) >= 0) => Stop
+                  // otherwise, disregarding if Some or None, we must decide how to continue
+                  case _ =>
+                    if (hasMoreEvents) Continue else ContinueDelayed
+                }
+
+              val nextStartingOffset = if (xs.isEmpty) {
+                /* If no events matched the tag between `from` and `maxOrdering` then there is no need to execute the exact
+                 * same query again. We can continue querying from `maxOrdering`, which will save some load on the db.
+                 * (Note: we may never return a value smaller than `from`, otherwise we might return duplicate events) */
+                if (from.compareTo(queryUntil) < 0) queryUntil else from
+//                math.max(from, queryUntil)
+              } else {
+                // Continue querying from the largest offset
+//                xs.map(_.offset.value).max
+                timestampOffset(xs.last.offset)
+              }
+              Some((nextStartingOffset, nextControl), xs)
+            }
+          }
+
+          control match {
+            case Stop     => Future.successful(None)
+            case Continue => retrieveNextBatch()
+            case ContinueDelayed =>
+              akka.pattern.after(readJournalConfig.refreshInterval, system.scheduler)(retrieveNextBatch())
+          }
+      }
+      .mapConcat(identity)
+  }
+
+  private def currentJournalEventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      max: Long,
+      latestOffset: java.sql.Timestamp): Source[EventEnvelope, NotUsed] = {
+    if (latestOffset.compareTo(offset) < 0) Source.empty
+    else {
+      readJournalDao.eventsByTagSpanner(tag, offset, latestOffset, max).mapAsync(1)(Future.fromTry).mapConcat {
+        case (repr, _, writeTime) =>
+          adaptEvents(repr).map(r =>
+            EventEnvelope(TimestampOffset(writeTime), r.persistenceId, r.sequenceNr, r.payload))
+      }
+    }
+  }
+
+  private def timestampOffset(offset: Offset): java.sql.Timestamp = offset match {
+    case TimestampOffset(timestamp) => timestamp
+    case NoOffset                   => new java.sql.Timestamp(0)
+    case other                      => throw new IllegalArgumentException(s"Expected TimestampOffset, got $other")
+  }
 }

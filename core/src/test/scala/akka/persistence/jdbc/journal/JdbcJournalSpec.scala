@@ -94,3 +94,6 @@ class H2JournalSpecPhysicalDelete
         .load("h2-application.conf")
         .withValue("jdbc-journal.logicalDelete", ConfigValueFactory.fromAnyRef(false)),
       H2())
+
+class SpannerJournalSpecSharedDb
+    extends JdbcJournalSpec(ConfigFactory.load("spanner-shared-db-application.conf"), Spanner())

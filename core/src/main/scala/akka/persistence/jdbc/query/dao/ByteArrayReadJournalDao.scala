@@ -6,6 +6,8 @@
 package akka.persistence.jdbc
 package query.dao
 
+import java.sql.SQLData
+
 import akka.NotUsed
 import akka.persistence.PersistentRepr
 import akka.persistence.jdbc.config.ReadJournalConfig
@@ -22,6 +24,10 @@ import slick.jdbc.JdbcBackend._
 import scala.collection.immutable._
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Try
+
+import akka.annotation.InternalApi
+import akka.persistence.jdbc.journal.dao.SpannerProfile
+import slick.jdbc.PositionedResult
 
 trait BaseByteArrayReadJournalDao extends ReadJournalDao with BaseJournalDaoWithReadMessages {
   def db: Database
@@ -64,6 +70,12 @@ trait BaseByteArrayReadJournalDao extends ReadJournalDao with BaseJournalDaoWith
   override def maxJournalSequence(): Future[Long] = {
     db.run(queries.maxJournalSequenceQuery.result)
   }
+
+  override def eventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      maxOffset: java.sql.Timestamp,
+      max: Long): Source[Try[(PersistentRepr, Set[String], java.sql.Timestamp)], NotUsed] = ??? // FIXME
 }
 
 object TagFilterFlow {
@@ -150,6 +162,7 @@ trait OracleReadJournalDao extends ReadJournalDao {
       super.eventsByTag(tag, offset, maxOffset, max)
     }
   }
+
 }
 
 trait H2ReadJournalDao extends ReadJournalDao {
@@ -192,8 +205,79 @@ class ByteArrayReadJournalDao(
     val readJournalConfig: ReadJournalConfig,
     serialization: Serialization)(implicit val ec: ExecutionContext, val mat: Materializer)
     extends BaseByteArrayReadJournalDao
+    with SpannerReadJournalDao
     with OracleReadJournalDao
     with H2ReadJournalDao {
   val queries = new ReadJournalQueries(profile, readJournalConfig)
   val serializer = new ByteArrayJournalSerializer(serialization, readJournalConfig.pluginConfig.tagSeparator)
+
+}
+
+trait SpannerReadJournalDao extends ReadJournalDao {
+  val db: Database
+  val profile: JdbcProfile
+  val readJournalConfig: ReadJournalConfig
+  val queries: ReadJournalQueries
+  val serializer: FlowPersistentReprSerializer[JournalRow]
+
+  import readJournalConfig.journalTableConfiguration._
+  import columnNames._
+
+  import profile.api._
+
+  /**
+   * INTERNAL API
+   */
+  @InternalApi private[akka] def isSpannerDriver(profile: JdbcProfile): Boolean = profile match {
+    case SpannerProfile => true
+    case _              => false
+  }
+
+  implicit object GetBytes extends GetResult[Array[Byte]] { def apply(rs: PositionedResult) = rs.nextBytes() }
+
+  abstract override def eventsByTagSpanner(
+      tag: String,
+      offset: java.sql.Timestamp,
+      maxOffset: java.sql.Timestamp,
+      max: Long): Source[Try[(PersistentRepr, Set[String], java.sql.Timestamp)], NotUsed] = {
+    if (isSpannerDriver(profile)) {
+      val theOffset = offset
+      val theTag = s"%$tag%"
+
+      val selectStatement =
+        sql"""
+            SELECT #$writeTime, #$deleted, #$persistenceId, #$sequenceNumber, #$message, #$tags
+            FROM #$tableName
+            WHERE #$tags LIKE $theTag
+            AND #$writeTime > $theOffset
+            AND #$writeTime <= $maxOffset
+            AND #$deleted = false
+            ORDER BY #$writeTime
+            """.as[(java.sql.Timestamp, Boolean, String, Long, Array[Byte], String)]
+
+      Source
+        .fromPublisher(db.stream(selectStatement))
+        .map {
+          case (writeTime, deleted, perstenceId, sequenceNumber, message, tags) =>
+            writeTime -> JournalRow(0, deleted, perstenceId, sequenceNumber, message, Option(tags))
+        }
+        .filter {
+          case (writeTime, journalRow) =>
+            // FIXME use better schema with separate columns, and tags in array
+            // applies workaround for https://github.com/akka/akka-persistence-jdbc/issues/168
+            journalRow.tags.exists(tags => tags.split(readJournalConfig.pluginConfig.tagSeparator).contains(tag))
+        }
+        .map {
+          case (writeTime, journalRow) =>
+            serializer.deserialize(journalRow).map {
+              // FIXME another Timestamp conversion here
+              case (persistentRepr, tags, _) => (persistentRepr, tags, writeTime)
+            }
+        }
+
+    } else {
+      super.eventsByTagSpanner(tag, offset, maxOffset, max)
+    }
+  }
+
 }

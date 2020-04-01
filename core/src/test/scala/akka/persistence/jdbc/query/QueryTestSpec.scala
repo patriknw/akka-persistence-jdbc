@@ -378,3 +378,23 @@ trait H2Cleaner extends QueryTestSpec {
     super.beforeEach()
   }
 }
+
+trait SpannerCleaner extends QueryTestSpec {
+  import akka.persistence.jdbc.util.Schema.Spanner
+
+  val actionsClearSpanner =
+    DBIO.seq(sqlu"""TRUNCATE journal""", sqlu"""TRUNCATE snapshot""").transactionally
+
+  def clearSpanner(): Unit =
+    withDatabase(_.run(actionsClearSpanner).futureValue)
+
+  override def beforeAll(): Unit = {
+    dropCreate(Spanner())
+    super.beforeAll()
+  }
+
+  override def beforeEach(): Unit = {
+    dropCreate(Spanner())
+    super.beforeEach()
+  }
+}

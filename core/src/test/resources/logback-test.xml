@@ -37,7 +37,11 @@
 
     <!--<logger name="slick.util.AsyncExecutor" level="DEBUG" />-->
 
-    <root level="INFO">
+    <logger name="slick.compiler" level="INFO" />
+
+    <logger name="io.grpc" level="INFO" />
+
+    <root level="DEBUG">
         <appender-ref ref="console"/>
     </root>
 
