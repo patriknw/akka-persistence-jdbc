@@ -55,41 +55,41 @@ class SpannerEventsByTagTest
     }
   }
 
-//  it should "find all events by tag" in withActorSystem { implicit system =>
-//    val journalOps = new ScalaJdbcReadJournalOperations(system)
-//    withTestActors(replyToMessages = true) { (actor1, actor2, actor3) =>
-//      (actor1 ? withTags(1, "number")).futureValue
-//      (actor2 ? withTags(2, "number")).futureValue
-//      (actor3 ? withTags(3, "number")).futureValue
-//
-//      journalOps.withEventsByTag()("number", NoOffset) { tp =>
-//        tp.request(Int.MaxValue)
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(1), "my-1", 1, 1))
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(2), "my-2", 1, 2))
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(3), "my-3", 1, 3))
-//        tp.cancel()
-//      }
-//
-//      journalOps.withEventsByTag()("number", NoOffset) { tp =>
-//        tp.request(Int.MaxValue)
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(1), "my-1", 1, 1))
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(2), "my-2", 1, 2))
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(3), "my-3", 1, 3))
-//        tp.expectNoMessage(NoMsgTime)
-//
-//        actor1 ? withTags(1, "number")
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(4), "my-1", 2, 1))
-//
-//        actor1 ? withTags(1, "number")
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(5), "my-1", 3, 1))
-//
-//        actor1 ? withTags(1, "number")
-//        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(6), "my-1", 4, 1))
-//        tp.cancel()
-//        tp.expectNoMessage(NoMsgTime)
-//      }
-//    }
-//  }
+  it should "find all events by tag" in withActorSystem { implicit system =>
+    val journalOps = new ScalaJdbcReadJournalOperations(system)
+    withTestActors(replyToMessages = true) { (actor1, actor2, actor3) =>
+      (actor1 ? withTags(1, "number")).futureValue
+      (actor2 ? withTags(2, "number")).futureValue
+      (actor3 ? withTags(3, "number")).futureValue
+
+      journalOps.withEventsByTag()("number", NoOffset) { tp =>
+        tp.request(Int.MaxValue)
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(1), "my-1", 1, 1))
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(2), "my-2", 1, 2))
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(3), "my-3", 1, 3))
+        tp.cancel()
+      }
+
+      journalOps.withEventsByTag()("number", NoOffset) { tp =>
+        tp.request(Int.MaxValue)
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(1), "my-1", 1, 1))
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(2), "my-2", 1, 2))
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(3), "my-3", 1, 3))
+        tp.expectNoMessage(NoMsgTime)
+
+        actor1 ? withTags(1, "number")
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(4), "my-1", 2, 1))
+
+        actor1 ? withTags(1, "number")
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(5), "my-1", 3, 1))
+
+        actor1 ? withTags(1, "number")
+        assertEnvelope(tp.expectNext(), EventEnvelope(Sequence(6), "my-1", 4, 1))
+        tp.cancel()
+        tp.expectNoMessage(NoMsgTime)
+      }
+    }
+  }
 
 }
 
